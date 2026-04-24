@@ -860,7 +860,7 @@ void WeatherRouting::AddRoute(wxString& GUID) {
     configuration = DefaultConfiguration();
 
   configuration.RouteGUID = GUID;
-  configuration.StartTime = wxDateTime::Now();
+  configuration.StartTime = wxDateTime::Now();  // Local time converted to UTC
   configuration.DeltaTime = 3600;
 
   if (!AddConfiguration(configuration)) return;
@@ -892,7 +892,7 @@ void WeatherRouting::UpdateColumns() {
 
       if (i == STARTTIME || i == ENDTIME) {
         name += " (";
-        if (m_SettingsDialog.m_cbUseLocalTime->GetValue())
+        if (m_SettingsDialog.m_cbUseLocalTime->IsChecked())
           name += _("local");
         else
           name += "UTC";
@@ -971,12 +971,9 @@ void WeatherRouting::UpdateCursorPositionDialog() {
     CursorPositionDialogMessage(dlg, _("Cursor outside computed route map"));
     return;
   }
-  wxDateTime display_time = rmo->GetLastCursorTime();
 
-  if (m_SettingsDialog.m_cbUseLocalTime->GetValue())
-    display_time = display_time.FromUTC();
-
-  dlg.m_stTime->SetLabel(display_time.Format("%x %H:%M"));
+  dlg.m_stTime->SetLabel(rmo->GetLastCursorTime().Format(
+      "%x %H:%M", m_SettingsDialog.GetTimeZone()));
 
   RouteMapConfiguration configuration = rmo->GetConfiguration();
   auto latStr = toSDMM_PlugIn(NEflag::LAT, p->lat, Precision::HI);
@@ -1064,11 +1061,8 @@ void WeatherRouting::UpdateRoutePositionDialog() {
   wxDateTime startTime = configuration.StartTime;
   wxDateTime cursorTime = data.time;
 
-  if (m_SettingsDialog.m_cbUseLocalTime->GetValue()) {
-    startTime = startTime.FromUTC();
-    cursorTime = data.time.FromUTC();
-  }
-  dlg.m_stTime->SetLabel(cursorTime.Format("%x %H:%M"));
+  dlg.m_stTime->SetLabel(
+      cursorTime.Format("%x %H:%M", m_SettingsDialog.GetTimeZone()));
 
   wxString duration = calculateTimeDelta(startTime, cursorTime);
   dlg.m_stDuration->SetLabel(duration);
@@ -2275,8 +2269,10 @@ bool WeatherRouting::OpenXML(wxString filename, bool reportfailure) {
             AttributeBool(e, "UseCurrentTime", false);
         if (configuration.UseCurrentTime) {
           // The current time will be overridden when the route is computed.
-          configuration.StartTime = wxDateTime::Now().ToUTC();
+          configuration.StartTime =
+              wxDateTime::Now();  // Local time converted to UTC
         } else {
+          // Note: StartDate and StartTime are stored as UTC
           wxDateTime date;
           date.ParseISODate(wxString::FromUTF8(e->Attribute("StartDate")));
           wxDateTime time;
@@ -2645,18 +2641,15 @@ void WeatherRoute::Update(WeatherRouting* wr, bool stateonly) {
             : _("From Boat");
     UseCurrentTime = configuration.UseCurrentTime ? _("true") : _("false");
     wxDateTime starttime = configuration.StartTime;
-    if (wr->m_SettingsDialog.m_cbUseLocalTime->GetValue())
-      starttime = starttime.FromUTC();
-    StartTime = starttime.Format("%x %H:%M");
+    StartTime =
+        starttime.Format("%x %H:%M", wr->m_SettingsDialog.GetTimeZone());
 
     End = configuration.End;
 
     wxDateTime endtime = routemapoverlay->EndTime();
-    if (endtime.IsValid()) {
-      if (wr->m_SettingsDialog.m_cbUseLocalTime->GetValue())
-        endtime = endtime.FromUTC();
-      EndTime = endtime.Format("%x %H:%M");
-    } else
+    if (endtime.IsValid())
+      EndTime = endtime.Format("%x %H:%M", wr->m_SettingsDialog.GetTimeZone());
+    else
       EndTime = "N/A";
 
     // REFACTORING
@@ -3092,12 +3085,10 @@ void WeatherRouting::SaveAsTrack(RouteMapOverlay& routemapoverlay) {
   }
 
   PlugIn_Track* newPath = new PlugIn_Track;
-  wxDateTime display_time = routemapoverlay.StartTime();
-  if (m_SettingsDialog.m_cbUseLocalTime->GetValue())
-    display_time = display_time.FromUTC();
-
-  newPath->m_NameString =
-      _("Weather Route ") + " (" + display_time.Format("%x %H:%M") + ")";
+  newPath->m_NameString = _("Weather Route ") + " (" +
+                          routemapoverlay.StartTime().Format(
+                              "%x %H:%M", m_SettingsDialog.GetTimeZone()) +
+                          ")";
 
   // XXX double check time is really end time, not start time off by one.
   RouteMapConfiguration c = routemapoverlay.GetConfiguration();
@@ -3109,7 +3100,8 @@ void WeatherRouting::SaveAsTrack(RouteMapOverlay& routemapoverlay) {
     PlugIn_Waypoint* newPoint = new PlugIn_Waypoint(
         it.lat, heading_resolve(it.lon), "circle", _("Weather Route Point"));
 
-    newPoint->m_CreateTime = it.time;
+    // TODO Remove ToUTC() as soon as bug #621 is fixed in main program
+    newPoint->m_CreateTime = it.time.ToUTC();
     newPath->pWaypointList->Append(newPoint);
   }
 
@@ -3119,7 +3111,8 @@ void WeatherRouting::SaveAsTrack(RouteMapOverlay& routemapoverlay) {
     PlugIn_Waypoint* newPoint =
         new PlugIn_Waypoint(p->lat, heading_resolve(p->lon), "circle",
                             _("Weather Route Destination"));
-    newPoint->m_CreateTime = routemapoverlay.EndTime();
+    // TODO Remove ToUTC() as soon as bug #621 is fixed in main program
+    newPoint->m_CreateTime = routemapoverlay.EndTime().ToUTC();
     newPath->pWaypointList->Append(newPoint);
   }
 
@@ -3150,12 +3143,10 @@ void WeatherRouting::SaveAsRoute(RouteMapOverlay& routemapoverlay) {
   }
 
   PlugIn_Route_Ex* newRoute = new PlugIn_Route_Ex();
-  wxDateTime display_time = routemapoverlay.StartTime();
-  if (m_SettingsDialog.m_cbUseLocalTime->GetValue())
-    display_time = display_time.FromUTC();
-
-  newRoute->m_NameString =
-      _("Weather Route ") + " (" + display_time.Format("%x %H:%M") + ")";
+  newRoute->m_NameString = _("Weather Route ") + " (" +
+                           routemapoverlay.StartTime().Format(
+                               "%x %H:%M", m_SettingsDialog.GetTimeZone()) +
+                           ")";
 
   RouteMapConfiguration c = routemapoverlay.GetConfiguration();
   newRoute->m_StartString = c.Start;
@@ -3167,7 +3158,8 @@ void WeatherRouting::SaveAsRoute(RouteMapOverlay& routemapoverlay) {
     PlugIn_Waypoint_Ex* newPoint = new PlugIn_Waypoint_Ex(
         it.lat, heading_resolve(it.lon), "circle", _("Weather Route Point"));
     // newPoint->m_PlannedSpeed = it.sog;
-    newPoint->m_CreateTime = it.time;
+    // TODO Remove ToUTC() as soon as bug #621 is fixed in main program
+    newPoint->m_CreateTime = it.time.ToUTC();
     newRoute->pWaypointList->Append(newPoint);
   }
 
@@ -3177,7 +3169,8 @@ void WeatherRouting::SaveAsRoute(RouteMapOverlay& routemapoverlay) {
     PlugIn_Waypoint_Ex* newPoint =
         new PlugIn_Waypoint_Ex(p->lat, heading_resolve(p->lon), "circle",
                                _("Weather Route Destination"));
-    newPoint->m_CreateTime = routemapoverlay.EndTime();
+    // TODO Remove ToUTC() as soon as bug #621 is fixed in main program
+    newPoint->m_CreateTime = routemapoverlay.EndTime().ToUTC();
     newRoute->pWaypointList->Append(newPoint);
   }
 
@@ -3212,12 +3205,9 @@ void WeatherRouting::ExportRoute(RouteMapOverlay& routemapoverlay) {
   SimpleRoute new_route;
   new_route.m_GUID = GetNewGUID();
 
-  wxDateTime display_time = routemapoverlay.StartTime();
-  if (m_SettingsDialog.m_cbUseLocalTime->GetValue())
-    display_time = display_time.FromUTC();
-
   new_route.m_RouteNameString =
-      "WXRoute_" + display_time.Format("%m-%d-%y_%H-%M");
+      "WXRoute_" + routemapoverlay.StartTime().Format(
+                       "%m-%d-%y_%H-%M", m_SettingsDialog.GetTimeZone());
   new_route.m_RouteNameString += "_" + c.Start + "_" + c.End;
 
   new_route.m_RouteStartString = c.Start;
@@ -3365,7 +3355,7 @@ void WeatherRouting::Start(RouteMapOverlay* routemapoverlay) {
   }
   if (configuration.UseCurrentTime) {
     // Use the current time
-    configuration.StartTime = wxDateTime::Now().ToUTC();
+    configuration.StartTime = wxDateTime::Now();  // Local time converted to UTC
     configUpdated = true;
   }
   if (configUpdated) {
@@ -3561,7 +3551,7 @@ RouteMapConfiguration WeatherRouting::DefaultConfiguration() {
   } else
     configuration.StartLat = 0, configuration.StartLon = 0;
 
-  configuration.StartTime = wxDateTime::Now();
+  configuration.StartTime = wxDateTime::Now();  // Local time converted to UTC
   configuration.DeltaTime = 3600;
 
   if (RouteMap::Positions.size() >= 2) {
@@ -3656,11 +3646,8 @@ void WeatherRouting::SaveSimplifiedRoute(
 
       if (closestData && minDistance < 0.1) {  // Within 0.1 nm
         // Add time information to waypoint description
-        wxDateTime time = closestData->time;
-        if (m_SettingsDialog.m_cbUseLocalTime->GetValue())
-          time = time.FromUTC();
-
-        waypoint->m_MarkDescription = time.Format("%x %H:%M");
+        waypoint->m_MarkDescription = closestData->time.Format(
+            "%x %H:%M", m_SettingsDialog.GetTimeZone());
 
         // Optionally add other information (wind, etc.)
         waypoint->m_MarkDescription += wxString::Format(
